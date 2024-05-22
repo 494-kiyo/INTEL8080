@@ -7,6 +7,11 @@
 
 #define MEMORY_SIZE 65535
 
+unsigned int AF = 0;
+unsigned int BC = 0;
+unsigned int DE = 0;
+unsigned int HL = 0;
+
 size_t fileSize;
 
 unsigned char* loadROM () {
@@ -37,14 +42,17 @@ unsigned char* loadROM () {
 
     fileSize = file_size;
     fclose(file);
-
     return buffer;
+}
+
+void opcodeExtract (unsigned char* codebuffer, int PC) {
+    unsigned char* opcode = &codebuffer[PC];
+    printf("%04x", codebuffer[PC]);
 }
 
 int main (int argc, char** argv) {
     unsigned char* buffer = loadROM();
-    for (int i = 0; i < 300; i++) {
-        printf("%x", buffer[i]);
-    }
+    int PC = 0;
+    opcodeExtract(buffer, PC);
     return 0;
 }
