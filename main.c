@@ -171,51 +171,85 @@ void dcx (uint8_t* lsr, uint8_t* rsr) {
     *rsr = answer & 0xff;
 }
 
-void jnz (i8080* state, unsigned char* opcode) {
-    if (state->cc.z == 0) {
+void jnx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag == 0) {
         state->pc = (opcode[2] << 8) | opcode[1];
     }
 }
 
-void jz (i8080* state, unsigned char* opcode) {
-    if (state->cc.z != 0) {
+void jx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag != 0) {
         state->pc = (opcode[2] << 8) | opcode[1];
     }
 }
 
-void jnc (i8080* state, unsigned char* opcode) {
-    if (state->cc.c == 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
+void call (i8080* state, unsigned char* opcode) {
+    uint16_t ret = state->pc + 2;
+    state->memory[state->sp-1] = (ret >> 8) & 0xff;
+    state->memory[state->sp-2] = (ret & 0xff);
+    state->sp = state->sp - 2;
+    state->pc = (opcode[2] << 8) | opcode[1];
+}
+
+void ret (i8080* state, unsigned char* opcode) {
+    state->pc = state->memory[state->sp] | state->memory[state->sp+1];
+}
+
+void cnx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag == 0) {
+        call (state, opcode);
     }
 }
 
-void jc (i8080* state, unsigned char* opcode) {
-    if (state->cc.c != 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
+void cx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag != 0) {
+        call (state, opcode);
     }
 }
 
-void jpo (i8080* state, unsigned char* opcode) {
-    if (state->cc.p == 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
+void rnx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag == 0) {
+        ret (state, opcode);
     }
 }
 
-void jpo (i8080* state, unsigned char* opcode) {
-    if (state->cc.p != 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
+void rx (i8080* state, uint8_t flag, unsigned char* opcode) {
+    if (flag != 0) {
+        ret (state, opcode);
     }
 }
 
-void jp (i8080* state, unsigned char* opcode) {
-    if (state->cc.s == 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
-    }
+void rst (i8080* state, uint16_t addr) {
+    uint16_t ret = state->pc;
+    state->memory[state->sp-1] = (ret >> 8) & 0xff;
+    state->memory[state->sp-2] = (ret & 0xff);
+    state->sp = state->sp - 2;
+    state->pc = addr;
 }
 
-void jm (i8080* state, unsigned char* opcode) {
-    if (state->cc.s != 0) {
-        state->pc = (opcode[2] << 8) | opcode[1];
+void rlc (i8080* state) {
+    uint8_t x = state->a;
+    state->a = (x << 1) | ((x >> 7) & 1);
+    state->cc.c = ((x >> 7) & 1);
+}
+
+void ral (i8080* state) {
+    uint8_t x = state->a;
+    state->a = (x << 1) | ((state->cc.c) & 1);
+    state->cc.c = (x >> 7) & 1;
+}
+
+void daa (i8080* state) { // i dont get this
+    uint8_t adjust = 0;
+    if ((state->a & 0x0F) > 9 || state->cc.ac) {
+        adjust |= 0x06;
+    }
+    if ((state->a >> 4) > 9 || state->cc.c) {
+        adjust |= 0x60;
+        state->cc.c = 1;
+    }
+    if (adjust) {
+        add(state, adjust);
     }
 }
 
@@ -318,6 +352,7 @@ void opcodeExtract (i8080* state) {
     case (0x2E):    // MVI L, d8
         break;
     case (0x2F):    // CMA
+        state->a = ~state->a;
         break;
     case (0x30):    // SIM
         break;
@@ -334,6 +369,7 @@ void opcodeExtract (i8080* state) {
     case (0x36):    // MVI M, d8
         break;
     case (0x37):    // STC
+        state->cc.c = 1;
         break;
     case (0x38):    // NOP
         break;
@@ -608,22 +644,28 @@ void opcodeExtract (i8080* state) {
     case (0xBF):    // CMP A
         break;
     case (0xC0):    // RNZ
+        rnx(state, state->cc.z, opcode);
         break;
     case (0xC1):    // POP B
         break;
     case (0xC2):    // JNZ addr
+        jnx(state, state->cc.z, opcode);
         break;
     case (0xC3):    // JMP addr
+        state->pc = (opcode[2] << 8) | opcode[1];
         break;
     case (0xC4):    // CNZ addr
+        cnx(state, state->cc.z, opcode);
         break;
     case (0xC5):    // PUSH B
         break;
     case (0xC6):    // ADI d8
         break;
     case (0xC7):    // RST 0
+        rst(state, 0x0000);
         break;
     case (0xC8):    // RZ
+        rx(state, state->cc.z, opcode);
         break;
     case (0xC9):    // RET
         break;
@@ -632,30 +674,38 @@ void opcodeExtract (i8080* state) {
     case (0xCB):    // JMP addr
         break;
     case (0xCC):    // CZ addr
+        cx(state, state->cc.z, opcode);
         break;
     case (0xCD):    // CALL addr
+        call (state, opcode);
         break;
     case (0xCE):    // ACI d8
         break;
     case (0xCF):    // RST 1
+        rst(state, 0x0008);
         break;
     case (0xD0):    // RNC
+        rnx(state, state->cc.c, opcode);
         break;
     case (0xD1):    // POP D
         break;
     case (0xD2):    // JNC addr
+        jnx (state, state->cc.c, opcode);
         break;
     case (0xD3):    // OUT d8
         break;
     case (0xD4):    // CNC addr
+        cnx (state, state->cc.c, opcode);
         break;
     case (0xD5):    // PUSH D
         break;
     case (0xD6):    // SUI d8
         break;
     case (0xD7):    // RST 2
+        rst(state, 0x0010);
         break;
     case (0xD8):    // RC
+        rx(state, state->cc.c, opcode);
         break;
     case (0xD9):    // -
         break;
@@ -664,62 +714,77 @@ void opcodeExtract (i8080* state) {
     case (0xDB):    // IN d8
         break;
     case (0xDC):    // CC addr
+        cx(state, state->cc.c, opcode);
         break;
     case (0xDD):    // -
         break;
     case (0xDE):    // SBI d8
         break;
     case (0xDF):    // RST 3
+        rst(state, 0x0018);
         break;
     case (0xE0):    // RPO
+        rnx(state, state->cc.p, opcode);
         break;
     case (0xE1):    // POP H
         break;
     case (0xE2):    // JPO addr
+        jnx(state, state->cc.p, opcode);
         break;
     case (0xE3):    // XTHL
         break;
     case (0xE4):    // CPO addr
+        cnx (state, state->cc.p, opcode);
         break;
     case (0xE5):    // PUSH H
         break;
     case (0xE6):    // ANI d8
         break;
     case (0xE7):    // RST 4
+        rst(state, 0x0020);
         break;
     case (0xE8):    // RPE
+        rx(state, state->cc.p, opcode);
         break;
     case (0xE9):    // PCHL
+        state->pc = ((uint16_t)state->h << 8) | (uint16_t) state->l;
         break;
     case (0xEA):    // JPE addr
         break;
     case (0xEB):    // XCHG
         break;
     case (0xEC):    // CPE addr
+        cx(state, state->cc.p, opcode);
         break;
     case (0xED):    // -
         break;
     case (0xEE):    // XRI d8
         break;
     case (0xEF):    // RST 5
+        rst(state, 0x0028);
         break;
     case (0xF0):    // RP
+        rnx(state, state->cc.s, opcode);
         break;
     case (0xF1):    // POP PSW
         break;
     case (0xF2):    // JP addr
+        jnx (state, state->cc.s, opcode);
         break;
     case (0xF3):    // DI
         break;
     case (0xF4):    // CP addr
+        cnx (state, state->cc.s, opcode);
         break;
     case (0xF5):    // PUSH PSW
         break;
     case (0xF6):    // ORI d8
         break;
     case (0xF7):    // RST 6
+        rst(state, 0x0030);
         break;
     case (0xF8):    // RM
+        rx(state, state->cc.s, opcode);
         break;
     case (0xF9):    // SPHL
         break;
@@ -728,12 +793,14 @@ void opcodeExtract (i8080* state) {
     case (0xFB):    // EI
         break;
     case (0xFC):    // CM addr
+        cx(state, state->cc.s, opcode);
         break;
     case (0xFD):    // -
         break;
     case (0xFE):    // CPI d8
         break;
     case (0xFF):    // RST 7
+        rst(state, 0x0038);
         break;
     }
     state->pc += 1;
