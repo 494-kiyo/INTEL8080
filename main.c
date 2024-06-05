@@ -28,6 +28,7 @@ typedef struct {
 } ConditionCodes;
 
 typedef struct {
+    bool IE;
     uint8_t a;
     uint8_t b;
     uint8_t c;
@@ -96,39 +97,41 @@ int parity (uint16_t value) { // 0 if odd
     return !count;
 }
 
-void add (i8080* state, uint16_t value) {
-    uint16_t answer = (uint16_t) state->a + (uint16_t) value;
+void arithmeticAll (i8080* state, uint8_t answer) {
     state->cc.z = ((answer & 0xff) == 0);
     state->cc.s = ((answer & 0x80) != 0);
     state->cc.c = (answer > 0xff);
     state->cc.p = parity(answer&0xff);
+    state->cc.ac = answer > 0x09;
+}
+
+void ZSP (i8080* state, uint8_t answer) {
+    state->cc.z = ((answer & 0xff) == 0);
+    state->cc.s = ((answer & 0x80) != 0);
+    state->cc.p = parity(answer&0xff);
+}
+
+void add (i8080* state, uint16_t value) {
+    uint16_t answer = (uint16_t) state->a + (uint16_t) value;
+    arithmeticAll(state, answer);
     state->a = answer & 0xff;
 }
 
 void addC (i8080* state, uint16_t value) {
-    uint16_t answer = (uint16_t) state->a + (uint16_t) value + state->c;
-    state->cc.z = ((answer & 0xff) == 0);
-    state->cc.s = ((answer & 0x80) != 0);
-    state->cc.c = (answer > 0xff);
-    state->cc.p = parity(answer&0xff);
+    uint16_t answer = (uint16_t) state->a + (uint16_t) value + (uint16_t) state->c;
+    arithmeticAll(state, answer);
     state->a = answer & 0xff;
 }
 
 void sub (i8080* state, uint16_t value) {
     uint16_t answer = (uint16_t) state->a - (uint16_t)value;
-    state->cc.z = ((answer & 0xff) == 0);
-    state->cc.s = ((answer & 0x80) != 0);
-    state->cc.c = (state->a <= value);
-    state->cc.p = (answer > 0xff);
+    arithmeticAll(state, answer);
     state->a = answer & 0xff;
 }
 
 void subC (i8080* state, uint16_t value) {
-    uint16_t answer = (uint16_t) state->a - (uint16_t)value - state->c;
-    state->cc.z = ((answer & 0xff) == 0);
-    state->cc.s = ((answer & 0x80) != 0);
-    state->cc.c = (state->a <= value);
-    state->cc.p = (answer > 0xff);
+    uint16_t answer = (uint16_t) state->a - (uint16_t)value - (uint16_t) state->c;
+    arithmeticAll(state, answer);
     state->a = answer & 0xff;
 }
 
@@ -141,27 +144,25 @@ void inx (uint8_t* lsr, uint8_t* rsr) {
 
 void inr (i8080* state, uint8_t* reg) {
     uint16_t answer = (uint16_t) *reg + 1;
-    state->cc.z = ((answer & 0xff) == 0);
-    state->cc.s = ((answer & 0x80) != 0);
-    state->cc.p = parity(answer&0xff);
+    ZSP(state, answer);
+    state->cc.ac = answer > 0x09;
     *reg = answer & 0xff;
 }
 
 void dcr (i8080* state, uint8_t* reg) {
     uint16_t answer = (uint16_t) *reg - 1;
-    state->cc.z = ((answer & 0xff) == 0);
-    state->cc.s = ((answer & 0x80) != 0);
-    state->cc.p = parity(answer&0xff);
+    ZSP(state, answer);
+    state->cc.ac = answer > 0x09;
     *reg = answer & 0xff;
 }
 
 void dad (i8080* state, uint16_t lvalue, uint16_t rvalue) {
     uint16_t answer = (lvalue << 8) | rvalue;
     uint16_t HL = (state->h << 8) | state->l;
-    HL = HL + answer;
-    state->cc.c = (HL > 0xffff);
-    state->h = ((uint8_t) HL >> 8) & 0xff;
-    state->l = (uint8_t) HL & 0xff;
+    answer = HL + answer;
+    state->cc.c = (answer > 0xffff);
+    state->h = ((uint8_t) answer >> 8) & 0xff;
+    state->l = (uint8_t) answer & 0xff;
 }
 
 void dcx (uint8_t* lsr, uint8_t* rsr) {
@@ -192,7 +193,8 @@ void call (i8080* state, unsigned char* opcode) {
 }
 
 void ret (i8080* state, unsigned char* opcode) {
-    state->pc = state->memory[state->sp] | state->memory[state->sp+1];
+    state->pc = state->memory[state->sp] | (state->memory[state->sp+1] << 8);
+    state->sp += 2;
 }
 
 void cnx (i8080* state, uint8_t flag, unsigned char* opcode) {
@@ -253,19 +255,145 @@ void daa (i8080* state) { // i dont get this
     }
 }
 
+void ana (i8080* state, uint8_t value) {
+    uint8_t answer = state->a & value;
+    ZSP(state, answer);
+    state->cc.c = 0;
+    state->a = answer;
+}
+
+void anaI (i8080* state, uint8_t value) {
+    uint8_t answer = state->a & value;
+    ZSP(state, answer);
+    state->cc.c = 0;
+    state->cc.ac = 0;
+    state->a = answer;
+}
+
+void ora (i8080* state, uint8_t value) {
+    uint8_t answer = state->a | value;
+    ZSP(state, answer);
+    state->cc.c = 0;
+    state->cc.ac = 0;
+    state->a = answer;  
+}
+
+void xra (i8080* state, uint8_t value) {
+    uint8_t answer = state->a ^ value;
+    ZSP(state, answer);
+    state->cc.c = 0;
+    state->cc.ac = 0;
+    state->a = answer;  
+}
+
+void cmp (i8080* state, uint8_t value) {
+    uint8_t answer = state->a - value;
+    state->cc.z = (0 == answer);
+    state->cc.s = (0x80 == (answer & 0x80));
+    state->cc.p = parity(answer);
+    state->cc.c = state->a < value;
+}
+
+void pop (i8080* state, uint8_t* lsr, uint8_t* rsr) {
+    *rsr = state->memory[state->sp];
+    *lsr = state->memory[state->sp+1];
+    state->sp += 2;
+}
+
+void push (i8080* state, uint8_t lsr, uint8_t rsr) {
+    state->memory[state->sp-1] = lsr;
+    state->memory[state->sp-2] = rsr;
+    state->sp = state->sp - 2;
+}
+
+void popPSW (i8080* state) {
+    state->a = state->memory[state->sp+1];
+    uint8_t psw = state->memory[state->sp];
+    state->cc.z  = (0x01 == (psw & 0x01));    
+    state->cc.s  = (0x02 == (psw & 0x02));    
+    state->cc.p  = (0x04 == (psw & 0x04));    
+    state->cc.c = (0x05 == (psw & 0x08));    
+    state->cc.ac = (0x10 == (psw & 0x10));    
+    state->sp += 2;  
+}
+
+void pushPSW (i8080* state) {
+    state->memory[state->sp-1] = state->a;    
+    uint8_t psw = (state->cc.z |    
+                    state->cc.s << 1 |    
+                    state->cc.p << 2 |    
+                    state->cc.c << 3 |    
+                    state->cc.ac << 4 );    
+    state->memory[state->sp-2] = psw;    
+    state->sp = state->sp - 2; 
+}
+
+void lxi (i8080* state, uint8_t* lsr, uint8_t* rsr, uint16_t value) {
+    *lsr = (value >> 8) & 0xff;
+    *rsr = value & 0xff;
+}
+
+void stax (i8080* state, uint8_t lsr, uint8_t rsr) {
+    uint16_t addr = (uint16_t)(lsr << 8) | (uint16_t)(rsr);
+    state->memory[addr] = state->a;
+}
+
+void shld (i8080* state, uint16_t value) {
+    state->memory[value] = state->h;
+    state->memory[value+1] = state->l;
+}
+
+void sta (i8080* state, uint16_t value) {
+    state->memory[value] = state->a;
+}
+
+void mvi (i8080* state, uint8_t* reg, uint8_t value) {
+    *reg = value;
+}
+
+void ldax (i8080* state, uint8_t* lsr, uint8_t* rsr) {
+    uint16_t addr = (uint16_t)(state->b << 8) | (uint16_t)state->c;
+    state->a = state->memory[addr];
+}
+
+void lhld (i8080* state, uint16_t value) {
+    state->h = (state->memory[value]) & 0xff;
+    state->l = state->memory[value+1];
+}
+
+void lda (i8080* state, uint16_t value) {
+    state->a = state->memory[value];
+}
+
+void mvi (uint8_t* reg, uint8_t value) {
+    *reg = value;
+}
+
+void mov (uint8_t* lsr, uint8_t* rsr) {
+    uint8_t temp = *lsr;
+    *lsr = *rsr;
+    *rsr = temp;
+}
+
 void opcodeExtract (i8080* state) {
     unsigned char* opcode = &state->memory[state->pc];
-
+    uint16_t nextWord = (opcode[1] << 8) & 0xffff | opcode[2] & 0xffff;
+    uint8_t nextByte = opcode[1];
+    uint16_t address = (uint16_t)(state->h << 8) | (uint16_t)state->l;
     switch (*opcode) {
     case (0x00):    // NOP
         break;
     case (0x01):    // LXI B, d16
+        lxi (state, state->b, state->c, nextWord);
         break;
     case (0x02):    // STAX B
+        stax(state, state->b, state->c);
         break;
     case (0x03):    // INX B
+        inx(state->b, state->c);
         break;
     case (0x04):    // INR B (S, Z, A, P)
+        inr(state, state->b);
         break;
     case (0x05):    // DCR B
         break;
@@ -282,6 +410,7 @@ void opcodeExtract (i8080* state) {
     case (0x0B):    // DCX B
         break;
     case (0x0C):    // INR C (S, Z, A, P)
+        inr(state, state->c);
         break;
     case (0x0D):    // DCR C
         break;
@@ -292,10 +421,12 @@ void opcodeExtract (i8080* state) {
     case (0x10):    // NOP
         break;
     case (0x11):    // LXI D, d16
+        lxi (state, state->d, state->e, nextWord);
         break;
     case (0x12):    // STAX D
         break;
     case (0x13):    // INX D
+        inx(state->d, state->e);
         break;
     case (0x14):    // INR D (S, Z, A, P)
         break;
@@ -314,6 +445,7 @@ void opcodeExtract (i8080* state) {
     case (0x1B):    // DCX D
         break;
     case (0x1C):    // INR E (S, Z, A, P)
+        inr(state, state->e);
         break;
     case (0x1D):    // DCR E
         break;
@@ -324,12 +456,15 @@ void opcodeExtract (i8080* state) {
     case (0x20):    // RIM
         break;
     case (0x21):    // LXI H, d16
+        lxi (state, state->h, state->l, nextWord);
         break;
     case (0x22):    // SHLD addr
         break;
     case (0x23):    // INX H
+        inx(state->h, state->l);
         break;
     case (0x24):    // INR H (S, Z, A, P)
+        inr(state, state->h);
         break;
     case (0x25):    // DCR H
         break;
@@ -346,6 +481,7 @@ void opcodeExtract (i8080* state) {
     case (0x2B):    // DCX H
         break;
     case (0x2C):    // INR L (S, Z, A, P)
+        inr(state, state->l);
         break;
     case (0x2D):    // DCR L
         break;
@@ -357,12 +493,15 @@ void opcodeExtract (i8080* state) {
     case (0x30):    // SIM
         break;
     case (0x31):    // LXI SP, d16
+        state->sp = nextWord;
         break;
     case (0x32):    // STA addr
         break;
     case (0x33):    // INX SP
+        state->sp += 1;
         break;
     case (0x34):    // INR M (S, Z, A, P)
+        inr(state, state->memory[address]);
         break;
     case (0x35):    // DCR M
         break;
@@ -380,6 +519,7 @@ void opcodeExtract (i8080* state) {
     case (0x3B):    // DCX SP
         break;
     case (0x3C):    // INR A (S, Z, A, P)
+        inr(state, state->a);
         break;
     case (0x3D):    // DCR A
         break;
